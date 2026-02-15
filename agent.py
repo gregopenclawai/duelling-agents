@@ -2,7 +2,10 @@
 """A minimal AI agent: REPL that talks to Claude with conversation memory."""
 
 import sys
+from dotenv import load_dotenv
 import anthropic
+
+load_dotenv()
 
 MODEL = "claude-sonnet-4-20250514"
 MAX_TOKENS = 4096
