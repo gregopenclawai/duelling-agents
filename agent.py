@@ -150,12 +150,18 @@ def run_command(command: str) -> str:
         return "Error: empty command"
 
     base_cmd = parts[0]
-    # Strip path prefix (e.g. /bin/ls → ls) for allowlist check
-    base_cmd_name = base_cmd.split("/")[-1]
 
-    if base_cmd_name not in _ALLOWED_COMMANDS:
+    # Reject any command that contains a slash — only bare command names are
+    # accepted. This prevents allowlist bypass via paths like ./ls or /bin/ls.
+    if "/" in base_cmd:
         return (
-            f"Error: command '{base_cmd_name}' is not in the allowed list. "
+            f"Error: command '{base_cmd}' must be a bare command name (no '/'). "
+            f"Allowed: {', '.join(sorted(_ALLOWED_COMMANDS))}"
+        )
+
+    if base_cmd not in _ALLOWED_COMMANDS:
+        return (
+            f"Error: command '{base_cmd}' is not in the allowed list. "
             f"Allowed: {', '.join(sorted(_ALLOWED_COMMANDS))}"
         )
 
@@ -270,6 +276,10 @@ def main():
             break
 
         messages.append({"role": "user", "content": user_input})
+        # Snapshot the message list length before the agent turn so that if an
+        # API error occurs mid-turn (after tool_result messages were appended)
+        # we can roll back all dangling entries in one slice deletion.
+        cursor = len(messages)
 
         try:
             assistant_text = run_agent_turn(client, messages)
@@ -279,8 +289,9 @@ def main():
 
         except anthropic.APIError as e:
             print(f"\n❌ API error: {e}\n")
-            # Remove the failed user message so conversation stays valid
-            messages.pop()
+            # Roll back every message appended during this turn (user message
+            # plus any assistant/tool_result pairs added inside run_agent_turn).
+            del messages[cursor:]
 
 
 if __name__ == "__main__":
