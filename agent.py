@@ -161,8 +161,8 @@ def run_command(command: str) -> str:
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            parts,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=10,
@@ -225,9 +225,6 @@ def run_agent_turn(client: anthropic.Anthropic, messages: list) -> str:
             return "".join(text_parts)
 
         # ---- Handle tool calls ----
-        # Append the assistant message (with tool_use blocks) to history
-        messages.append({"role": "assistant", "content": response.content})
-
         # Execute each tool and gather results
         tool_results = []
         for tu in tool_uses:
@@ -242,8 +239,13 @@ def run_agent_turn(client: anthropic.Anthropic, messages: list) -> str:
                 }
             )
 
-        # Feed results back as a user message and loop
-        messages.append({"role": "user", "content": tool_results})
+        # Only extend history once both messages are ready — avoids partial
+        # state corruption if an anthropic.APIError is raised on the next call.
+        new_messages = [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": tool_results},
+        ]
+        messages.extend(new_messages)
         # Continue the loop — model will now produce its final response
 
 
