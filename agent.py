@@ -275,11 +275,11 @@ def main():
             print("Bye!")
             break
 
-        messages.append({"role": "user", "content": user_input})
-        # Snapshot the message list length before the agent turn so that if an
-        # API error occurs mid-turn (after tool_result messages were appended)
-        # we can roll back all dangling entries in one slice deletion.
+        # Snapshot the message list length *before* appending the user message
+        # so that if an API error occurs mid-turn we can roll back the entire
+        # failed turn (user message + any tool_result entries) in one slice.
         cursor = len(messages)
+        messages.append({"role": "user", "content": user_input})
 
         try:
             assistant_text = run_agent_turn(client, messages)
