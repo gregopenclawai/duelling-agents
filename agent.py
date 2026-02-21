@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """A minimal AI agent: REPL that talks to Claude with conversation memory and tools."""
 
+import argparse
 import ast
 import operator
 import subprocess
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
 import anthropic
 
@@ -12,6 +14,49 @@ load_dotenv()
 
 MODEL = "claude-sonnet-4-20250514"
 MAX_TOKENS = 4096
+
+# ---------------------------------------------------------------------------
+# SOUL.md — system prompt / personality loader
+# ---------------------------------------------------------------------------
+
+DEFAULT_SOUL_PATH = Path("SOUL.md")
+
+
+def load_soul(soul_path: str | None = None) -> str | None:
+    """
+    Load a SOUL.md file and return its contents as a system prompt string.
+
+    Resolution order:
+    1. Explicit path passed via ``--soul`` CLI flag (``soul_path`` argument).
+    2. ``SOUL.md`` in the current working directory.
+    3. ``None`` — no system prompt (silent fallback).
+
+    Returns the file contents as a string, or ``None`` if no file is found.
+    """
+    candidates: list[Path] = []
+    if soul_path is not None:
+        candidates.append(Path(soul_path))
+    candidates.append(DEFAULT_SOUL_PATH)
+
+    explicit = Path(soul_path) if soul_path is not None else None
+
+    for path in candidates:
+        if path.is_file():
+            try:
+                content = path.read_text(encoding="utf-8").strip()
+                if content:
+                    print(f"🪬  Soul loaded from: {path}")
+                    return content
+            except OSError as e:
+                print(f"⚠️  Could not read soul file '{path}': {e}", file=sys.stderr)
+        elif explicit is not None and path == explicit:
+            # Explicit path was given but file doesn't exist — warn loudly
+            print(
+                f"⚠️  Soul file '{soul_path}' not found — running without system prompt.",
+                file=sys.stderr,
+            )
+
+    return None
 
 # ---------------------------------------------------------------------------
 # Tool definitions (Anthropic tool_use format)
@@ -204,18 +249,31 @@ def execute_tool(name: str, tool_input: dict) -> str:
 # Agent loop
 # ---------------------------------------------------------------------------
 
-def run_agent_turn(client: anthropic.Anthropic, messages: list) -> str:
+def run_agent_turn(
+    client: anthropic.Anthropic,
+    messages: list,
+    system: str | None = None,
+) -> str:
     """
     Run one full agent turn (potentially multiple model calls if tool_use is
     involved) and return the final text response.
+
+    Args:
+        client:   Anthropic API client.
+        messages: Conversation history (mutated in-place during tool loops).
+        system:   Optional system prompt string (loaded from SOUL.md).
     """
     while True:
-        response = client.messages.create(
+        create_kwargs: dict = dict(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             tools=TOOLS,
             messages=messages,
         )
+        if system:
+            create_kwargs["system"] = system
+
+        response = client.messages.create(**create_kwargs)
 
         # Collect any text blocks from this response
         text_parts = []
@@ -256,6 +314,23 @@ def run_agent_turn(client: anthropic.Anthropic, messages: list) -> str:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Minimal AI agent with tool use and optional personality.",
+    )
+    parser.add_argument(
+        "--soul",
+        metavar="PATH",
+        default=None,
+        help=(
+            "Path to a SOUL.md file whose contents are injected as the system prompt. "
+            "Defaults to SOUL.md in the current directory if it exists."
+        ),
+    )
+    args = parser.parse_args()
+
+    # Load personality / system prompt (None if no SOUL.md found)
+    soul = load_soul(args.soul)
+
     client = anthropic.Anthropic()
     messages = []
 
@@ -282,7 +357,7 @@ def main():
         messages.append({"role": "user", "content": user_input})
 
         try:
-            assistant_text = run_agent_turn(client, messages)
+            assistant_text = run_agent_turn(client, messages, system=soul)
             # Persist the final assistant text turn in history
             messages.append({"role": "assistant", "content": assistant_text})
             print(f"\nAgent: {assistant_text}\n")
